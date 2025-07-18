@@ -112,18 +112,23 @@ from langchain.chains import create_retrieval_chain
 from gtts import gTTS
 import base64
 
-# --- Load Environment Variables ---
+# --- Load environment variables ---
 load_dotenv()
 groq_api_key = os.environ['GROQ_API_KEY']
+
+# --- Configure Ollama Base URL (Remote Server) ---
+OLLAMA_BASE_URL = "http://3.111.226.34:11434"
+os.environ["OLLAMA_BASE_URL"] = OLLAMA_BASE_URL
 
 # --- Streamlit Title ---
 st.title("🩺 AI Medical Assistant - Symptom to Diagnosis & Treatment (Text + Voice)")
 
-# --- Initialize FAISS Vector Store ---
+# --- Initialize FAISS Vector Store with Remote Ollama ---
 if "vectors" not in st.session_state:
     with st.spinner("⏳ Loading knowledge base... (First time only)"):
         embeddings = OllamaEmbeddings(
-            model="nous-hermes2"  # ✅ LOCAL MODEL – no base_url needed
+            model="nous-hermes2",
+            base_url=OLLAMA_BASE_URL
         )
 
         if os.path.exists("faiss_index/index.faiss"):
@@ -142,10 +147,10 @@ if "vectors" not in st.session_state:
             st.session_state.vectors = FAISS.from_documents(split_docs, embeddings)
             st.session_state.vectors.save_local("faiss_index")
 
-# --- LLM from Groq ---
+# --- Use Groq's LLM (you can replace with Ollama LLM if needed) ---
 llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama3-8b-8192")
 
-# --- Prompt Template ---
+# --- Prompt Template for Medical Diagnosis ---
 prompt_template = ChatPromptTemplate.from_template("""
 You are a highly experienced and responsible medical doctor.
 
@@ -176,12 +181,9 @@ Respond in this exact format:
 3. **Recommended Treatment**: List safe and commonly used medicines or home remedies with dosage and precautions if known.
 4. **Red Flags**: List signs that indicate the patient should seek immediate care.
 5. **Clarity**: Write in clear, non-technical language a regular person can understand.
-
-Output should be medically accurate, highly confident, and structured. Avoid vague or overly cautious language unless absolutely necessary.
-
 """)
 
-# --- RAG Chain ---
+# --- Create Retrieval-Augmented Generation Chain ---
 document_chain = create_stuff_documents_chain(llm, prompt_template)
 retriever = st.session_state.vectors.as_retriever()
 retrieval_chain = create_retrieval_chain(retriever, document_chain)
@@ -189,7 +191,7 @@ retrieval_chain = create_retrieval_chain(retriever, document_chain)
 # --- User Input ---
 user_input = st.text_input("🤒 Describe your symptoms (e.g., fever, headache, cough):")
 
-# --- Text-to-Speech ---
+# --- Text-to-Speech Function ---
 def generate_voice(text, filename="response.mp3"):
     tts = gTTS(text)
     tts.save(filename)
@@ -204,7 +206,7 @@ def generate_voice(text, filename="response.mp3"):
         """
         return audio_html
 
-# --- Generate Response ---
+# --- Generate AI Diagnosis ---
 if user_input:
     start = time.time()
     response = retrieval_chain.invoke({"input": user_input})
@@ -214,7 +216,7 @@ if user_input:
     st.markdown("### 🩺 AI Diagnosis & Treatment")
     answer = response.get("answer", "")
 
-    # Fallback if answer is poor
+    # Fallback if vague/empty response
     if "no mention" in answer.lower() or len(answer.strip()) < 20:
         st.info("🔄 Refining with more powerful model...")
         llm2 = ChatGroq(groq_api_key=groq_api_key, model_name="llama3-70b-8192", temperature=0.3)
@@ -222,7 +224,7 @@ if user_input:
 
     st.markdown(answer)
 
-    # Voice Output
+    # --- Voice Output ---
     st.markdown("### 🔊 Voice Output")
     audio_html = generate_voice(answer)
     st.markdown(audio_html, unsafe_allow_html=True)
