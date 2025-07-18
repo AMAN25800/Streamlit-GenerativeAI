@@ -5,3 +5,5 @@ langchain-community
 gtts
 faiss-cpu
 python-dotenv
+beautifulsoup4
+lxml
