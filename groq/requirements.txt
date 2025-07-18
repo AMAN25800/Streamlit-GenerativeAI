@@ -7,3 +7,13 @@ faiss-cpu
 python-dotenv
 beautifulsoup4
 lxml
+streamlit
+langchain
+langchain-community
+langchain-groq
+faiss-cpu
+gtts
+python-dotenv
+beautifulsoup4
+requests
+tqdm
