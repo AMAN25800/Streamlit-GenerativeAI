@@ -112,23 +112,18 @@ from langchain.chains import create_retrieval_chain
 from gtts import gTTS
 import base64
 
-# Load environment variables
+# --- Load Environment Variables ---
 load_dotenv()
 groq_api_key = os.environ['GROQ_API_KEY']
 
-# Set Ollama remote URL
-OLLAMA_BASE_URL = "http://3.111.226.34:11434"
-os.environ["OLLAMA_BASE_URL"] = OLLAMA_BASE_URL
-
-# Title
+# --- Streamlit Title ---
 st.title("🩺 AI Medical Assistant - Symptom to Diagnosis & Treatment (Text + Voice)")
 
-# Initialize vector store once
+# --- Initialize FAISS Vector Store ---
 if "vectors" not in st.session_state:
     with st.spinner("⏳ Loading knowledge base... (First time only)"):
         embeddings = OllamaEmbeddings(
-            model="nous-hermes2",
-            base_url=OLLAMA_BASE_URL
+            model="nous-hermes2"  # ✅ LOCAL MODEL – no base_url needed
         )
 
         if os.path.exists("faiss_index/index.faiss"):
@@ -147,40 +142,54 @@ if "vectors" not in st.session_state:
             st.session_state.vectors = FAISS.from_documents(split_docs, embeddings)
             st.session_state.vectors.save_local("faiss_index")
 
-# Set up the LLM
+# --- LLM from Groq ---
 llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama3-8b-8192")
 
-# Prompt Template
-prompt_template = ChatPromptTemplate.from_template(
-    """
-You are an experienced and cautious medical doctor. Based on the context and user symptoms,
-provide the most likely diagnosis and recommend **only safe, general remedies** like hydration, rest, or consulting a real doctor.
+# --- Prompt Template ---
+prompt_template = ChatPromptTemplate.from_template("""
+You are a highly experienced and responsible medical doctor.
 
-⚠️ Do NOT suggest specific medications unless they are universally safe and well-known (like paracetamol for fever).
-Avoid suggesting antibiotics, controlled substances, or prescription-only drugs.
+You are given a patient's symptoms and access to general medical knowledge. Based on this, your task is to provide the most medically accurate and clinically confident diagnosis possible.
 
 <context>
 {context}
 </context>
 
-Symptoms: {input}
+Instructions:
 
-Respond in this format:
-1. **Possible Diagnosis**
-2. **Safe Remedies or Actions** (no strong or specific medications unless clearly essential)
-3. **Note** (always advise seeing a real doctor for confirmation)
-"""
-)
+1. DO NOT hedge your answer. If symptoms point strongly to one diagnosis, **state it directly**.
+2. Only offer multiple diagnoses **if absolutely necessary** — and always indicate which is most likely and why.
+3. DO NOT mention "as an AI" or suggest the user sees a doctor unless the symptoms are vague, severe, or life-threatening.
+4. Use your medical reasoning — rule out unlikely conditions based on what is *not* present.
 
+---
 
-# Create Retrieval QA Chain
+Symptoms:
+{input}
+
+---
+
+Respond in this exact format:
+
+1. **Most Likely Diagnosis**: Clearly state the ONE most probable condition based on symptoms. Justify briefly using symptom pattern logic.
+2. **Rationale**: Explain how the symptoms match this condition, and why other conditions are less likely.
+3. **Recommended Treatment**: List safe and commonly used medicines or home remedies with dosage and precautions if known.
+4. **Red Flags**: List signs that indicate the patient should seek immediate care.
+5. **Clarity**: Write in clear, non-technical language a regular person can understand.
+
+Output should be medically accurate, highly confident, and structured. Avoid vague or overly cautious language unless absolutely necessary.
+
+""")
+
+# --- RAG Chain ---
 document_chain = create_stuff_documents_chain(llm, prompt_template)
 retriever = st.session_state.vectors.as_retriever()
 retrieval_chain = create_retrieval_chain(retriever, document_chain)
 
-# Input from user
+# --- User Input ---
 user_input = st.text_input("🤒 Describe your symptoms (e.g., fever, headache, cough):")
 
+# --- Text-to-Speech ---
 def generate_voice(text, filename="response.mp3"):
     tts = gTTS(text)
     tts.save(filename)
@@ -195,7 +204,7 @@ def generate_voice(text, filename="response.mp3"):
         """
         return audio_html
 
-# Output
+# --- Generate Response ---
 if user_input:
     start = time.time()
     response = retrieval_chain.invoke({"input": user_input})
@@ -205,7 +214,7 @@ if user_input:
     st.markdown("### 🩺 AI Diagnosis & Treatment")
     answer = response.get("answer", "")
 
-    # Fallback to better model if response is poor
+    # Fallback if answer is poor
     if "no mention" in answer.lower() or len(answer.strip()) < 20:
         st.info("🔄 Refining with more powerful model...")
         llm2 = ChatGroq(groq_api_key=groq_api_key, model_name="llama3-70b-8192", temperature=0.3)
@@ -213,7 +222,7 @@ if user_input:
 
     st.markdown(answer)
 
-    # Generate and play voice
+    # Voice Output
     st.markdown("### 🔊 Voice Output")
     audio_html = generate_voice(answer)
     st.markdown(audio_html, unsafe_allow_html=True)
